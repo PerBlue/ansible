@@ -91,6 +91,8 @@ See [Porting Guide](https://docs.ansible.com/ansible/devel/porting_guides/portin
   override) ANSIBLE_REMOTE_TEMP.  This matches with the spelling of the config
   value. ANSIBLE_REMOTE_TEMP will be deprecated in the future.
 * A few modules were updated to put temporary files in the existing temp dir already created for the module itself, including get_url, assemble, uri and yum.
+* Added lifecycle policy support to `ecs_ecr`
+* Deprecated `ecs_ecr` option `delete_policy` in favor of `purge_policy`
 
 #### Removed Modules (previously deprecated):
 * accelerate.
