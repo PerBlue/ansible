@@ -382,8 +382,7 @@ class EcsServiceManager:
         return response['service']
 
     def update_service(self, service_name, cluster_name, task_definition,
-                       load_balancers, desired_count, client_token, role,
-                       deployment_configuration, network_configuration):
+                       desired_count, deployment_configuration, network_configuration):
         params = dict(
             cluster=cluster_name,
             service=service_name,
@@ -471,10 +470,10 @@ def main():
 
                 role = module.params['role']
                 client_token = module.params['client_token']
-                loadBalancers = module.params['load_balancers']
+                load_balancers = module.params['load_balancers']
 
                 if update:
-                    if (existing['loadBalancers'] or []) != loadBalancers:
+                    if (existing['loadBalancers'] or []) != load_balancers:
                         module.fail_json(msg="It is not possible to update the load balancers of an existing service")
                     # update required
                     response = service_mgr.update_service(module.params['name'],
@@ -484,9 +483,9 @@ def main():
                                                           deployment_configuration,
                                                           network_configuration)
                 else:
-                    for loadBalancer in loadBalancers:
-                        if 'containerPort' in loadBalancer:
-                            loadBalancer['containerPort'] = int(loadBalancer['containerPort'])
+                    for load_balancer in load_balancers:
+                        if 'containerPort' in load_balancer:
+                            load_balancer['containerPort'] = int(load_balancer['containerPort'])
                     # doesn't exist. create it.
                     response = service_mgr.create_service(module.params['name'],
                                                           module.params['cluster'],
