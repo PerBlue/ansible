@@ -199,7 +199,7 @@ class EcsTaskManager:
             networkMode=network_mode,
             containerDefinitions=container_definitions,
             volumes=volumes,
-            requiresCompatibilities=launch_type
+            requiresCompatibilities=[launch_type]
         )
         if cpu:
             params['cpu'] = cpu
