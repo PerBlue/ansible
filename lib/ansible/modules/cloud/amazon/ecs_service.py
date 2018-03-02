@@ -97,6 +97,12 @@ options:
           - The placement strategy objects to use for tasks in your service. You can specify a maximum of 5 strategy rules per service
         required: false
         version_added: 2.4
+    network_configuration:
+        description:
+          - network configuration of the service. Only applicable for task definitions created with C(awsvpc) I(network_mode).
+          - I(network_configuration) has two keys, I(subnets), a list of subnet IDs to which the task is attached and I(security_groups),
+            a list of group names or group IDs for the task
+        version_added: 2.5
 extends_documentation_fragment:
     - aws
     - ec2
@@ -116,6 +122,20 @@ EXAMPLES = '''
     name: default
     state: present
     cluster: new_cluster
+
+- name: create ECS service on VPC network
+  ecs_service:
+    state: present
+    name: console-test-service
+    cluster: new_cluster
+    task_definition: 'new_cluster-task:1'
+    desired_count: 0
+    network_configuration:
+      subnets:
+      - subnet-abcd1234
+      security_groups:
+      - sg-aaaa1111
+      - my_security_group
 
 # Simple example to delete
 - ecs_service:
@@ -265,15 +285,14 @@ DEPLOYMENT_CONFIGURATION_TYPE_MAP = {
     'minimum_healthy_percent': 'int'
 }
 
+from ansible.module_utils.aws.core import AnsibleAWSModule
+from ansible.module_utils.ec2 import boto3_conn, ec2_argument_spec, get_aws_connection_info
+from ansible.module_utils.ec2 import snake_dict_to_camel_dict, map_complex_type, get_ec2_security_group_ids_from_names
 
 try:
     import botocore
-    HAS_BOTO3 = True
 except ImportError:
-    HAS_BOTO3 = False
-
-from ansible.module_utils.basic import AnsibleModule
-from ansible.module_utils.ec2 import boto3_conn, ec2_argument_spec, get_aws_connection_info, snake_dict_to_camel_dict, map_complex_type
+    pass  # handled by AnsibleAWSModule
 
 
 class EcsServiceManager:
@@ -281,9 +300,26 @@ class EcsServiceManager:
 
     def __init__(self, module):
         self.module = module
-
         region, ec2_url, aws_connect_kwargs = get_aws_connection_info(module, boto3=True)
         self.ecs = boto3_conn(module, conn_type='client', resource='ecs', region=region, endpoint=ec2_url, **aws_connect_kwargs)
+        self.ec2 = boto3_conn(module, conn_type='client', resource='ec2', region=region, endpoint=ec2_url, **aws_connect_kwargs)
+
+    def format_network_configuration(self, network_config):
+        result = dict()
+        if 'subnets' in network_config:
+            result['subnets'] = network_config['subnets']
+        else:
+            self.module.fail_json(msg="Network configuration must include subnets")
+        if 'security_groups' in network_config:
+            groups = network_config['security_groups']
+            if any(not sg.startswith('sg-') for sg in groups):
+                try:
+                    vpc_id = self.ec2.describe_subnets(SubnetIds=[result['subnets'][0]])['Subnets'][0]['VpcId']
+                    groups = get_ec2_security_group_ids_from_names(groups, self.ec2, vpc_id)
+                except (botocore.exceptions.ClientError, botocore.exceptions.BotoCoreError) as e:
+                    self.module.fail_json_aws(e, msg="Couldn't look up security groups")
+            result['securityGroups'] = groups
+        return dict(awsvpcConfiguration=result)
 
     def find_in_array(self, array_of_services, service_name, field_name='serviceArn'):
         for c in array_of_services:
@@ -292,9 +328,12 @@ class EcsServiceManager:
         return None
 
     def describe_service(self, cluster_name, service_name):
-        response = self.ecs.describe_services(
-            cluster=cluster_name,
-            services=[service_name])
+        try:
+            response = self.ecs.describe_services(
+                cluster=cluster_name,
+                services=[service_name])
+        except (botocore.exceptions.ClientError, botocore.exceptions.BotoCoreError) as e:
+            self.module.fail_json_aws(e, msg="Couldn't describe ECS service")
         msg = ''
         if len(response['failures']) > 0:
             c = self.find_in_array(response['failures'], service_name, 'arn')
@@ -322,8 +361,8 @@ class EcsServiceManager:
 
     def create_service(self, service_name, cluster_name, task_definition, load_balancers,
                        desired_count, client_token, role, deployment_configuration,
-                       placement_constraints, placement_strategy):
-        response = self.ecs.create_service(
+                       placement_constraints, placement_strategy, network_configuration):
+        params = dict(
             cluster=cluster_name,
             serviceName=service_name,
             taskDefinition=task_definition,
@@ -334,20 +373,43 @@ class EcsServiceManager:
             deploymentConfiguration=deployment_configuration,
             placementConstraints=placement_constraints,
             placementStrategy=placement_strategy)
+        if network_configuration:
+            params['networkConfiguration'] = network_configuration
+        try:
+            response = self.ecs.create_service(**params)
+        except (botocore.exceptions.ClientError, botocore.exceptions.BotoCoreError) as e:
+            self.module.fail_json_aws(e, msg="Couldn't create ECS service")
         return response['service']
 
     def update_service(self, service_name, cluster_name, task_definition,
-                       desired_count, deployment_configuration):
-        response = self.ecs.update_service(
+                       load_balancers, desired_count, client_token, role,
+                       deployment_configuration, network_configuration):
+        params = dict(
             cluster=cluster_name,
             service=service_name,
             taskDefinition=task_definition,
             desiredCount=desired_count,
             deploymentConfiguration=deployment_configuration)
+        if network_configuration:
+            params['networkConfiguration'] = network_configuration
+        try:
+            response = self.ecs.update_service(**params)
+        except (botocore.exceptions.ClientError, botocore.exceptions.BotoCoreError) as e:
+            self.module.fail_json_aws(e, msg="Couldn't update ECS service")
         return response['service']
 
     def delete_service(self, service, cluster=None):
-        return self.ecs.delete_service(cluster=cluster, service=service)
+        try:
+            return self.ecs.delete_service(cluster=cluster, service=service)
+        except (botocore.exceptions.ClientError, botocore.exceptions.BotoCoreError) as e:
+            self.module.fail_json_aws(e, msg="Couldn't delete ECS service")
+
+    def ecs_api_handles_network_configuration(self):
+        from distutils.version import LooseVersion
+        # There doesn't seem to be a nice way to inspect botocore to look
+        # for attributes (and networkConfiguration is not an explicit argument
+        # to e.g. ecs.run_task, it's just passed as a keyword argument)
+        return LooseVersion(botocore.__version__) >= LooseVersion('1.7.44')
 
 
 def main():
@@ -365,26 +427,27 @@ def main():
         repeat=dict(required=False, type='int', default=10),
         deployment_configuration=dict(required=False, default={}, type='dict'),
         placement_constraints=dict(required=False, default=[], type='list'),
-        placement_strategy=dict(required=False, default=[], type='list')
+        placement_strategy=dict(required=False, default=[], type='list'),
+        network_configuration=dict(required=False, type='dict')
     ))
 
-    module = AnsibleModule(argument_spec=argument_spec,
-                           supports_check_mode=True,
-                           required_if=[
-                               ('state', 'present', ['task_definition', 'desired_count'])
-                           ],
-                           required_together=[['load_balancers', 'role']]
-                           )
-
-    if not HAS_BOTO3:
-        module.fail_json(msg='boto3 is required.')
+    module = AnsibleAWSModule(argument_spec=argument_spec,
+                              supports_check_mode=True,
+                              required_if=[('state', 'present', ['task_definition', 'desired_count'])],
+                              required_together=[['load_balancers', 'role']])
 
     service_mgr = EcsServiceManager(module)
+    if module.params['network_configuration']:
+        if not service_mgr.ecs_api_handles_network_configuration():
+            module.fail_json(msg='botocore needs to be version 1.7.44 or higher to use network configuration')
+        network_configuration = service_mgr.format_network_configuration(module.params['network_configuration'])
+    else:
+        network_configuration = None
 
     deployment_configuration = map_complex_type(module.params['deployment_configuration'],
                                                 DEPLOYMENT_CONFIGURATION_TYPE_MAP)
 
-    deploymentConfiguration = snake_dict_to_camel_dict(deployment_configuration)
+    deployment_configuration = snake_dict_to_camel_dict(deployment_configuration)
 
     try:
         existing = service_mgr.describe_service(module.params['cluster'], module.params['name'])
@@ -407,7 +470,7 @@ def main():
             if not module.check_mode:
 
                 role = module.params['role']
-                clientToken = module.params['client_token']
+                client_token = module.params['client_token']
                 loadBalancers = module.params['load_balancers']
 
                 if update:
@@ -418,7 +481,8 @@ def main():
                                                           module.params['cluster'],
                                                           module.params['task_definition'],
                                                           module.params['desired_count'],
-                                                          deploymentConfiguration)
+                                                          deployment_configuration,
+                                                          network_configuration)
                 else:
                     for loadBalancer in loadBalancers:
                         if 'containerPort' in loadBalancer:
@@ -427,13 +491,14 @@ def main():
                     response = service_mgr.create_service(module.params['name'],
                                                           module.params['cluster'],
                                                           module.params['task_definition'],
-                                                          loadBalancers,
+                                                          load_balancers,
                                                           module.params['desired_count'],
-                                                          clientToken,
+                                                          client_token,
                                                           role,
-                                                          deploymentConfiguration,
+                                                          deployment_configuration,
                                                           module.params['placement_constraints'],
-                                                          module.params['placement_strategy'])
+                                                          module.params['placement_strategy'],
+                                                          network_configuration)
 
                 results['service'] = response
 

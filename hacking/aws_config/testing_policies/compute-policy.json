@@ -228,29 +228,6 @@
             ]
         },
         {
-          "Sid": "AllowECSManagement",
-          "Effect": "Allow",
-          "Action": [
-            "application-autoscaling:Describe*",
-            "application-autoscaling:PutScalingPolicy",
-            "application-autoscaling:RegisterScalableTarget",
-            "cloudwatch:DescribeAlarms",
-            "cloudwatch:PutMetricAlarm",
-            "ecs:CreateCluster",
-            "ecs:CreateService",
-            "ecs:DeleteCluster",
-            "ecs:DeleteService",
-            "ecs:Describe*",
-            "ecs:DeregisterTaskDefinition",
-            "ecs:List*",
-            "ecs:RegisterTaskDefinition",
-            "ecs:UpdateService"
-          ],
-          "Resource": [
-            "*"
-          ]
-        },
-        {
           "Sid": "AllowSESManagement",
           "Effect": "Allow",
           "Action": [
