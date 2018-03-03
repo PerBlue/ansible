@@ -92,6 +92,11 @@ options:
               If using the Fargate launch type, this field is required and is limited by the cpu
         required: false
         version_added: 2.5
+    execution_role_arn:
+        description:
+            - The Amazon Resource Name (ARN) of the task execution role that the Amazon ECS container agent and the Docker daemon can assume
+        required: false
+        version_added: 2.5
 extends_documentation_fragment:
     - aws
     - ec2
@@ -172,7 +177,7 @@ class EcsTaskManager:
         except botocore.exceptions.ClientError:
             return None
 
-    def register_task(self, family, task_role_arn, network_mode, container_definitions, volumes, launch_type, cpu, memory):
+    def register_task(self, family, task_role_arn, network_mode, container_definitions, volumes, launch_type, cpu, memory, execution_role_arn):
         validated_containers = []
 
         # Ensures the number parameters are int as required by boto
@@ -205,6 +210,8 @@ class EcsTaskManager:
             params['cpu'] = cpu
         if memory:
             params['memory'] = memory
+        if execution_role_arn:
+            params['executionRoleArn'] = execution_role_arn
 
         try:
             response = self.ecs.register_task_definition(**params)
@@ -265,7 +272,8 @@ def main():
         volumes=dict(required=False, type='list'),
         launch_type=dict(required=False, choices=['EC2', 'FARGATE'], default='EC2'),
         cpu=dict(required=False, type='str'),
-        memory=dict(required=False, type='str')
+        memory=dict(required=False, type='str'),
+        execution_role_arn=dict(required=False, type='str')
     ))
 
     module = AnsibleModule(argument_spec=argument_spec, supports_check_mode=True)
@@ -289,10 +297,13 @@ def main():
             module.fail_json(msg="To use task definitions, a family must be specified")
 
         launch_type = module.params['launch_type']
-        if launch_type == 'EC2' and ('cpu' not in module.params or  not module.params['cpu']):
+        if launch_type == 'FARGATE' and ('cpu' not in module.params or not module.params['cpu']):
             module.fail_json(msg="To use FARGATE launch type, cpu must be specified")
 
-        if launch_type == 'EC2' and ('memory' not in module.params or  not module.params['memory']):
+        if launch_type == 'FARGATE' and ('memory' not in module.params or not module.params['memory']):
+            module.fail_json(msg="To use FARGATE launch type, memory must be specified")
+
+        if launch_type == 'FARGATE' and ('execution_role_arn' not in module.params or not module.params['execution_role_arn']):
             module.fail_json(msg="To use FARGATE launch type, memory must be specified")
 
         family = module.params['family']
@@ -407,7 +418,8 @@ def main():
                                                                    volumes,
                                                                    module.params['launch_type'],
                                                                    module.params['cpu'],
-                                                                   module.params['memory'])
+                                                                   module.params['memory'],
+                                                                   module.params['execution_role_arn'])
             results['changed'] = True
 
     elif module.params['state'] == 'absent':
