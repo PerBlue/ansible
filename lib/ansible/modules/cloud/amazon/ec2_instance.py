@@ -973,7 +973,7 @@ def build_run_instance_spec(params, ec2=None):
 
     # IAM profile
     if params.get('instance_role'):
-        spec['IamInstanceProfile'] = dict(Arn=determine_iam_role(params.get('iam_profile')))
+        spec['IamInstanceProfile'] = dict(Arn=determine_iam_role(params.get('instance_role'), None))
 
     spec['InstanceType'] = params['instance_type']
     return spec
