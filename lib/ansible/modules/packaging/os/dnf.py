@@ -233,6 +233,12 @@ def _configure_base(module, base, conf_file, disable_gpg_check, installroot='/')
     if hasattr(conf, 'substitutions') and hasattr(conf.substitutions, 'update_from_etc'):
         conf.substitutions.update_from_etc(installroot)
 
+    # Honor update_cache (expire-cache): expire repo metadata so the subsequent
+    # fill_sack refetches it. This 2.6 dnf module predates the parameter, which
+    # newer roles (e.g. Datadog) pass.
+    if module.params.get('update_cache'):
+        conf.metadata_expire = 0
+
 
 def _specify_repositories(base, disablerepo, enablerepo):
     """Enable and disable repositories matching the provided patterns."""
@@ -499,6 +505,7 @@ def main():
             disable_gpg_check=dict(default=False, type='bool'),
             installroot=dict(default='/', type='path'),
             autoremove=dict(type='bool'),
+            update_cache=dict(default=False, type='bool', aliases=['expire-cache']),
         ),
         required_one_of=[['name', 'list', 'autoremove']],
         mutually_exclusive=[['name', 'list'], ['autoremove', 'list']],
