@@ -226,6 +226,13 @@ def _configure_base(module, base, conf_file, disable_gpg_check, installroot='/')
     # Read the configuration file
     conf.read()
 
+    # conf.read() does not load variable substitutions from /etc/dnf/vars
+    # (e.g. Amazon Linux 2023's awsregion/awsdomain). Without them, repo
+    # mirrorlist URLs that use $awsregion etc. are left unexpanded and dnf
+    # fails with "Bad hostname". Load them the same way the dnf CLI does.
+    if hasattr(conf, 'substitutions') and hasattr(conf.substitutions, 'update_from_etc'):
+        conf.substitutions.update_from_etc(installroot)
+
 
 def _specify_repositories(base, disablerepo, enablerepo):
     """Enable and disable repositories matching the provided patterns."""
