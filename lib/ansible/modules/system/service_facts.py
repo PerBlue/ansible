@@ -181,7 +181,10 @@ class SystemctlScanService(BaseService):
         rc, stdout, stderr = self.module.run_command("%s list-unit-files --type=service | tail -n +2 | head -n -2" % systemctl_path, use_unsafe_shell=True)
         for line in stdout.split("\n"):
             line_data = line.split()
-            if len(line_data) != 2:
+            # systemd >= 245 (e.g. Amazon Linux 2023) adds a third "PRESET"
+            # column to `list-unit-files`; accept >= 2 fields and use the first
+            # two (UNIT FILE, STATE) so services are still detected.
+            if len(line_data) < 2:
                 continue
             if line_data[1] == "enabled":
                 state_val = "running"
