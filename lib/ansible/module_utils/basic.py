@@ -267,6 +267,27 @@ def get_platform():
     return platform.system()
 
 
+def _os_release():
+    ''' Minimal /etc/os-release parser.
+
+    Python 3.8 removed platform.linux_distribution(), platform.dist() and
+    platform._supported_dists, so on newer interpreters (e.g. Amazon Linux
+    2023) the platform-based detection below raises. Parse os-release instead.
+    '''
+    os_release = {}
+    try:
+        with open('/etc/os-release') as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith('#') or '=' not in line:
+                    continue
+                key, value = line.split('=', 1)
+                os_release[key] = value.strip().strip('"').strip("'")
+    except (IOError, OSError):
+        pass
+    return os_release
+
+
 def get_distribution():
     ''' return the distribution name '''
     if platform.system() == 'Linux':
@@ -279,9 +300,16 @@ def get_distribution():
                     distribution = 'Amazon'
                 else:
                     distribution = 'OtherLinux'
-        except:
-            # FIXME: MethodMissing, I assume?
-            distribution = platform.dist()[0].capitalize()
+        except Exception:
+            # platform.linux_distribution()/platform.dist() were removed in
+            # Python 3.8; fall back to /etc/os-release.
+            name = _os_release().get('NAME', '')
+            if 'Amazon' in name:
+                distribution = 'Amazon'
+            elif name:
+                distribution = name.split()[0].capitalize()
+            else:
+                distribution = None
     else:
         distribution = None
     return distribution
@@ -294,9 +322,10 @@ def get_distribution_version():
             distribution_version = platform.linux_distribution()[1]
             if not distribution_version and os.path.isfile('/etc/system-release'):
                 distribution_version = platform.linux_distribution(supported_dists=['system'])[1]
-        except:
-            # FIXME: MethodMissing, I assume?
-            distribution_version = platform.dist()[1]
+        except Exception:
+            # platform.linux_distribution()/platform.dist() were removed in
+            # Python 3.8; fall back to /etc/os-release.
+            distribution_version = _os_release().get('VERSION_ID')
     else:
         distribution_version = None
     return distribution_version
